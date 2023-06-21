@@ -20,30 +20,37 @@ type Item struct {
 }
 
 // attention: verkle tree must 32 bytes len
-var simpleDataWith4Item = []Item{
-	{
-		key: DecodeString("a711355fffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
-		val: valWith32bytes,
-	},
-	{
-		key: DecodeString("a77d337fffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
-		val: valWith32bytes,
-	},
-	{
-		key: DecodeString("a7f9365fffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
-		val: valWith32bytes,
-	},
-	{
-		key: DecodeString("a77d397fffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
-		val: valWith32bytes,
-	},
+var simpleDataWith4Item = []string{
+	"a711355f",
+	"a77d337f",
+	"a7f9365f",
+	"a77d397f",
+}
+
+var simpleDataWith7Level = []string{
+	"010001011232e3e1",
+	"010001fd0102a1b1",
+	"010001fd010201a2",
+	"010001fd0102fde1",
+	"010001fdfdfda2b2",
+	"010001fdfdffb3d3",
+	"0100fe01a432e3e1",
+	"0100fefd1232e3ef",
+	"01ffcabfa432e3e1",
+	"fe011abfb432e3e1",
+	"fefd1abfa43ee3e1",
 }
 
 var randomSize = flag.Int("randomSize", 1000, "set randomDataItem size")
 
 func TestSimpleVerkleTree(t *testing.T) {
-	analysisVerkle(simpleDataWith4Item)
+	analysisVerkle(generateItems(simpleDataWith4Item))
 }
+
+func TestSparseVerkleTree(t *testing.T) {
+	analysisVerkle(generateItems(simpleDataWith7Level))
+}
+
 func TestRandomVerkleTree(t *testing.T) {
 	randomDataItem := randomKVList(*randomSize)
 	fmt.Println("generated", *randomSize, "kv")
@@ -59,21 +66,7 @@ func analysisVerkle(input []Item) {
 		}
 		kv[string(item.key)] = item.val
 	}
-
 	_ = root.Commit()
-	for _, item := range input {
-		//proof, _, _, _, err := MakeVerkleMultiProof(root, [][]byte{item.key}, kv)
-		proof, _, _, _, err := MakeVerkleMultiProof(root, [][]byte{item.key})
-		if err != nil {
-			panic(err)
-		}
-		serProof, _, err := SerializeProof(proof)
-		if err != nil {
-			panic(err)
-		}
-		level := getVerkleNodeLevel(root, item.key, 0)
-		fmt.Println("key:", hex.EncodeToString(item.key), "level:", level, "proof:", verkleProofCount(serProof))
-	}
 
 	data := make(map[int][]int)
 	scanVerkleTree(root, data, 0)
@@ -88,6 +81,61 @@ func analysisVerkle(input []Item) {
 		table.Append([]string{strconv.Itoa(i), strconv.Itoa(d[0]), strconv.Itoa(d[1]), strconv.Itoa(d[2])})
 	}
 	table.Render()
+
+	// if size > 1000, only output max 100 per level
+	nodeCache := make(map[int]int)
+	for _, item := range input {
+		level := getVerkleNodeLevel(root, item.key, 0)
+		if len(input) > 1000 && nodeCache[level] > 100 {
+			continue
+		}
+		nodeCache[level] += 1
+
+		//proof, _, _, _, err := MakeVerkleMultiProof(root, [][]byte{item.key}, kv)
+		proof, _, _, _, err := MakeVerkleMultiProof(root, [][]byte{item.key})
+		if err != nil {
+			panic(err)
+		}
+		serProof, _, err := SerializeProof(proof)
+		if err != nil {
+			panic(err)
+		}
+		fmt.Println("key:", hex.EncodeToString(item.key), "level:", level, "proof:", verkleProofCount(serProof))
+	}
+
+	storageSize := 0
+	export, _ := root.(*InternalNode)
+	nodes, err := export.BatchSerialize()
+	if err != nil {
+		panic(err)
+	}
+
+	for _, node := range nodes {
+		storageSize += len(node.CommitmentBytes[:])
+		storageSize += len(node.SerializedBytes)
+	}
+	fmt.Println("trieStorageSize:", storageSize)
+}
+
+func generateItems(input []string) []Item {
+	items := make([]Item, len(input))
+	for i, s := range input {
+		src := DecodeString(s)
+		key := make([]byte, 32)
+		if len(src) > len(key) {
+			copy(key, src[:32])
+		} else {
+			copy(key, src)
+			for j := len(src); j < len(key); j++ {
+				key[j] = 0xff
+			}
+		}
+		items[i] = Item{
+			key: key,
+			val: valWith32bytes,
+		}
+	}
+	return items
 }
 
 var (
